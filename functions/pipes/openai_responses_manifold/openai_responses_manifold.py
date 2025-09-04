@@ -816,8 +816,8 @@ class Pipe:
         if ModelFamily.supports("reasoning", body.model):
             assistant_message = await status_indicator.add(
                 assistant_message,
-                status_title="Thinking…",
-                status_content="Reading the question and building a plan to answer it. This may take a moment.",
+                status_title="생각 중…",
+                status_content="질문을 분석하고 답변 계획을 세우는 중입니다. 잠시만 기다려주세요.",
             )
 
         model_router_result = getattr(body, "model_router_result", None)
@@ -866,7 +866,7 @@ class Pipe:
                         if text:
                             # Use last bolded header as the title, else fallback
                             title_match = re.findall(r"\*\*(.+?)\*\*", text)
-                            title = title_match[-1].strip() if title_match else "Thinking…"
+                            title = title_match[-1].strip() if title_match else "생각 중…"
 
                             # Remove bold markers from body
                             content = re.sub(r"\*\*(.+?)\*\*", "", text).strip()
@@ -937,7 +937,7 @@ class Pipe:
                             # Emit a status update for the message
                             assistant_message = await status_indicator.add(
                                 assistant_message,
-                                status_title="📝 Responding to the user…",
+                                status_title="📝 사용자에게 답변 작성 중…",
                                 status_content="",
                             )
                             continue
@@ -974,43 +974,43 @@ class Pipe:
 
 
                         # Default empty content
-                        title = f"Running `{item_name}`"
+                        title = f"`{item_name}` 실행 중"
                         content = ""
 
                         # Prepare detailed content per item_type
                         if item_type == "function_call":
-                            title = f"🛠️ Running the {item_name} tool…"
+                            title = f"🛠️ {item_name} 도구 실행 중…"
                             arguments = json.loads(item.get("arguments") or "{}")
                             args_formatted = ", ".join(f"{k}={json.dumps(v)}" for k, v in arguments.items())
                             content = wrap_code_block(f"{item_name}({args_formatted})", "python")
 
                         elif item_type == "web_search_call":
-                            title = "🔍 Hmm, let me quickly check online…"
+                            title = "🔍 빠르게 웹 검색 중…"
 
                             # If action type is 'search', then set title to "🔍 Searching the web for [query]"
                             action = item.get("action", {})
                             if action.get("type") == "search":
                                 query = action.get("query")
                                 if query:
-                                    title = f"🔍 Searching the web for: `{query}`"
+                                    title = f"🔍 웹 검색 중: `{query}`"
                                 else:
-                                    title = "🔍 Searching the web"
+                                    title = "🔍 웹 검색 중"
 
                             # If action type is 'open_page', then set title to "🔍 Opening web page [url]"
                             elif action.get("type") == "open_page":
-                                title = "🔍 Opening web page…"
+                                title = "🔍 웹 페이지 여는 중…"
                                 url = action.get("url")
                                 if url:
                                     content = f"URL: `{url}`"
 
                         elif item_type == "file_search_call":
-                            title = "📂 Let me skim those files…"
+                            title = "📂 파일을 살펴보는 중…"
                         elif item_type == "image_generation_call":
-                            title = "🎨 Let me create that image…"
+                            title = "🎨 이미지를 생성하는 중…"
                         elif item_type == "local_shell_call":
-                            title = "💻 Let me run that command…"
+                            title = "💻 명령을 실행하는 중…"
                         elif item_type == "mcp_call":
-                            title = "🌐 Let me query the MCP server…"
+                            title = "🌐 MCP 서버에 요청을 보내는 중…"
                         elif item_type == "reasoning":
                             title = None # Don't emit a title for reasoning items
 
@@ -1065,7 +1065,7 @@ class Pipe:
                         result_text = wrap_code_block(output.get("output", ""))
                         assistant_message = await status_indicator.add(
                             assistant_message,
-                            status_title="🛠️ Received tool result",
+                            status_title="🛠️ 도구 결과 수신",
                             status_content=result_text,
                         )
                     body.input.extend(function_outputs)
@@ -1133,9 +1133,9 @@ class Pipe:
         if ModelFamily.supports("reasoning", body.model):
             assistant_message = await status_indicator.add(
                 assistant_message,
-                status_title="Thinking…",
+                status_title="생각 중…",
                 status_content=(
-                    "Reading the question and building a plan to answer it. This may take a moment."
+                    "질문을 분석하고 답변 계획을 세우는 중입니다. 잠시만 기다려주세요.."
                 ),
             )
 
@@ -1194,11 +1194,11 @@ class Pipe:
                             self.logger.debug("Persisted item: %s", hidden_uid_marker)
                             assistant_message += hidden_uid_marker
 
-                        title = f"Running `{item.get('name', 'unnamed_tool')}`"
+                        title = f"`{item.get('name', 'unnamed_tool')}` 실행중"
                         content = ""
 
                         if item_type == "function_call":
-                            title = f"🛠️ Running the {item.get('name', 'unnamed_tool')} tool…"
+                            title = f"🛠️ {item.get('name', 'unnamed_tool')} 도구 실행중…"
                             arguments = json.loads(item.get("arguments") or "{}")
                             args_formatted = ", ".join(
                                 f"{k}={json.dumps(v)}" for k, v in arguments.items()
@@ -1210,22 +1210,22 @@ class Pipe:
                             if action.get("type") == "search":
                                 query = action.get("query")
                                 if query:
-                                    title = f"🔍 Searching the web for: `{query}`"
+                                    title = f"🔍 웹 검색 중: `{query}`"
                                 else:
-                                    title = "🔍 Searching the web"
+                                    title = "🔍 웹 검색 중"
                             elif action.get("type") == "open_page":
-                                title = "🔍 Opening web page…"
+                                title = "🔍 웹 페이지 여는 중"
                                 url = action.get("url")
                                 if url:
                                     content = f"URL: `{url}`"
                         elif item_type == "file_search_call":
-                            title = "📂 Let me skim those files…"
+                            title = "📂 파일 검색 중"
                         elif item_type == "image_generation_call":
-                            title = "🎨 Let me create that image…"
+                            title = "🎨 이미지 생성 중"
                         elif item_type == "local_shell_call":
-                            title = "💻 Let me run that command…"
+                            title = "💻 명령어 실행 중"
                         elif item_type == "mcp_call":
-                            title = "🌐 Let me query the MCP server…"
+                            title = "🌐 MCP 서버 조회 중"
                         elif item_type == "reasoning":
                             title = None
 
@@ -1266,7 +1266,7 @@ class Pipe:
                         result_text = wrap_code_block(output.get("output", ""))
                         assistant_message = await status_indicator.add(
                             assistant_message,
-                            status_title="🛠️ Received tool result",
+                            status_title="🛠️ 도구 실행 결과",
                             status_content=result_text,
                         )
                     body.input.extend(function_outputs)
