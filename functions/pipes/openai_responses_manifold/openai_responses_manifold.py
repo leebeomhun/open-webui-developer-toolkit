@@ -1947,7 +1947,7 @@ class ExpandableStatusIndicator:
         if self._done:
             return assistant_message
         elapsed = time.perf_counter() - self._started
-        self._items.append((f"Finished in {elapsed:.1f} s", []))
+        self._items.append((f"{elapsed:.0f}초 동안 생각함", []))
         self._done = True
         return await self._render(assistant_message, emit)
 
