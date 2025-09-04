@@ -157,7 +157,7 @@ class ResponsesBody(BaseModel):
     # Optional parameters
     instructions: Optional[str] = ""              # system / developer prompt
     stream: bool = False                          # SSE chunking
-    store: Optional[bool] = False                  # persist response on OpenAI side
+    store: Optional[bool] = True                  # persist response on OpenAI side
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     max_output_tokens: Optional[int] = None
