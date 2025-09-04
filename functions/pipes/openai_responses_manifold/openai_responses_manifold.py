@@ -825,11 +825,17 @@ class Pipe:
             delattr(body, "model_router_result")
             model = model_router_result.get("model", "")
             reasoning_effort = model_router_result.get("reasoning_effort", "")
-
+            effort_labels = {
+                "minimal": "최소",
+                "low": "낮음",
+                "medium": "중간",
+                "high": "높음",
+            }
+            effort_label = effort_labels.get(reasoning_effort, "알 수 없음")
             assistant_message = await status_indicator.add(
-            assistant_message,
-            status_title=f"Routing to {model} (effort: {reasoning_effort})",
-            status_content=f"Explanation: {model_router_result.get('explanation', '')}"
+                assistant_message,
+                status_title=f"{model}(으)로 라우팅 중 (추론 복잡도: {effort_label})",
+                status_content=f"설명: {model_router_result.get('explanation', '')}"
             )
 
 
@@ -1641,12 +1647,87 @@ class Pipe:
         event_emitter: Callable[[Dict[str, Any]], Awaitable[None]] | None = None,
     ) -> ResponsesBody:
         """Route using first output message only (assumes no tool events)."""
+        instruction_route = """
+# **역할 및 목표**
+사용자 메시지에 가장 적합한 GPT-5 모델을 선택하고, 도구 필요성과 작업 복잡성을 평가하는 **라우팅 도우미** 역할을 수행합니다.
 
+# **지침**
+- 메시지가 **사용 가능한 도구**의 사용을 요구할 수 있는 경우, **함수 호출** 기능이 있는 모델을 선택합니다.
+- 도구가 필요하지 않을 때는 요청의 복잡성에 따라 **가장 빠르거나** **가장 유능한** 모델을 우선적으로 선택합니다.
+
+# **사용 가능한 모델 및 기능**
+## **모델**
+-   **gpt-5-chat-latest**
+    -   빠르고, 범용적이며, 창의적입니다.
+    -   글쓰기, 초안 작성, 채팅 기반 상호작용에 가장 적합합니다.
+    -   ⚠️ 도구 호출을 지원하지 **않습니다**—도구가 필요하지 않을 때만 선택하세요.
+
+-   **gpt-5-mini**
+    -   경량이며, 도구 사용을 지원하고, 반응이 빠릅니다.
+    -   광범위한 추론을 요구하지 않는 **도구를 사용할 수 있는 간단한 작업**에 적합합니다.
+    -   ✅ 함수 호출 지원—속도와 유용성 간의 강력한 균형을 제공합니다.
+    -   ⚠️ web_search를 지원하지 **않습니다** 실시간 정보가 필요없는 경우에만 선택합니다
+
+-   **gpt-5**
+    -   추론과 복잡한 다단계 분석에 강합니다.
+    -   **복잡하거나 심층적인 분석 작업**을 위해 설계되었습니다.
+    -   ✅ 함수 호출 및 고급 연산 지원—도구 의존적이거나 고도의 복잡성을 요구하는 추론 필요 시 선택하세요.
+
+# **라우팅 체크리스트**
+-   도구 통합이 응답을 개선할 수 있는지 평가합니다.
+-   어느 정도의 추론이나 문제 해결이 필요한지 평가합니다.
+-   요구사항에 모델을 맞춥니다:
+    -   도구 사용 불필요 → `gpt-5-chat-latest` 사용
+    -   도구 필요, 간단한 작업 → `gpt-5-mini` 사용
+    -   도구 필요 or web_search 필요, 복잡한 작업 → `gpt-5` 사용
+-   확실하지 않을 때는 도구 사용 가능 모델을 우선시합니다 (`gpt-5` 선호).
+-   요구사항이 모호하면 추가 정보를 요청합니다.
+
+# **출력 형식**
+모델 선택과 간결한 설명을 포함하는 JSON 객체로만 응답하세요. 요구사항이 불분명할 경우, JSON 응답에 적절한 오류 메시지를 포함하세요.
+
+# **예시**
+-   **지금 밴쿠버 날씨는 어때요?**
+    {
+      "model": "gpt-5",
+      "explanation": "실시간 정보 필요, web_search 도구 사용 필요함"
+    }
+
+-   **최신 M3 노트북들을 비교하고 출처를 인용해주세요.**
+    {
+      "model": "gpt-5",
+      "explanation": "실시간 정보 필요, 도구를 사용한 조사 및 종합에는 깊이 있는 추론이 필요함."
+    }
+
+-   **이 이메일 초안을 요약하고 더 격식 있게 만들어주세요.**
+    {
+      "model": "gpt-5-chat-latest",
+      "explanation": "단순 텍스트 다듬기; 도구 필요 없음."
+    }
+
+-   **업로드된 이 PDF를 글머리 기호로 요약해주세요.**
+    {
+      "model": "gpt-5",
+      "explanation": "문서 파싱에는 도구가 필요할 수 있음; gpt-5에 적합할 만큼 복잡함."
+    }
+
+-   **이 문단을 스페인어로 번역해주세요.**
+    {
+      "model": "gpt-5-chat-latest",
+      "explanation": "간단한 번역; 도구 필요 없음."
+    }
+
+-   **내일 예정된 회의 목록을 알려주세요.**
+    {
+      "model": "gpt-5-mini",
+      "explanation": "캘린더 도구 조회는 간단함; mini가 효율적임."
+    }
+        """
         # --- keep your existing router_body UNCHANGED ---
         router_body = {
             "model": "gpt-5-mini",
             "reasoning": {"effort": "minimal"},
-            "instructions": "# Role and Objective\nServe as a **routing helper** for selecting the most appropriate GPT-5 model for user messages, evaluating tool necessity and task complexity.\n\n---\n\n# Instructions\n- If a message may require the use of **any available tool**, select a model with **function calling** capabilities.\n- When tools are not necessary, favor the **fastest** or **most capable** model according to the complexity of the request.\n\n---\n\n# Available Models and Capabilities\n## Models\n\n- **gpt-5-chat-latest**\n  - Fast, general-purpose, and creative.\n  - Best for writing, drafting, and chat-based interactions.\n  - ⚠️ Does **not** support tool calling—select only when tools are not required.\n\n- **gpt-5-mini**\n  - Lightweight, supports tool usage, and is rapidly responsive.\n  - Suited for **simple tasks that may use tools** but don’t demand extensive reasoning.\n  - ✅ Function calling supported—offers a strong balance between speed and utility.\n\n- **gpt-5**\n  - Strong at reasoning and complex, multi-step analysis.\n  - Designed for **complex or deeply analytical tasks**.\n  - ✅ Supports function calling and advanced operations—choose for tool-reliant or high-complexity reasoning needs.\n\n---\n\n# Routing Checklist\n- Assess whether tool integration could improve the response.\n- Evaluate how much reasoning or problem-solving is required.\n- Match model to requirements:\n  - No tool usage required → use `gpt-5-chat-latest`\n  - Tools required, simple task → use `gpt-5-mini`\n  - Tools required, complex task → use `gpt-5`\n- When in doubt, prioritize a tool-capable model (prefer `gpt-5`).\n- Ask for more information if requirements are ambiguous.\n\n---\n\n# Output Format\nRespond only with a JSON object containing your model selection and a concise explanation. If the requirements are unclear, include an appropriate error message in the JSON response.\n\n---\n\n# Examples\n- **What’s the weather in Vancouver right now?**\n  ```json\n  {\n    \"model\": \"gpt-5-mini\",\n    \"explanation\": \"Quick tool lookup; simple enough for a fast model.\"\n  }\n  ```\n\n- **Compare the newest M3 laptops and cite sources.**\n  ```json\n  {\n    \"model\": \"gpt-5\",\n    \"explanation\": \"Research and synthesis with tools requires reasoning depth.\"\n  }\n  ```\n\n- **Summarize this email draft and make it more formal.**\n  ```json\n  {\n    \"model\": \"gpt-5-chat-latest\",\n    \"explanation\": \"Polishing text only; no tools needed.\"\n  }\n  ```\n\n- **Summarize this uploaded PDF into bullet points.**\n  ```json\n  {\n    \"model\": \"gpt-5\",\n    \"explanation\": \"Document parsing may require tools; complex enough for gpt-5.\"\n  }\n  ```\n\n- **Translate this paragraph into Spanish.**\n  ```json\n  {\n    \"model\": \"gpt-5-chat-latest\",\n    \"explanation\": \"Simple translation; tools not required.\"\n  }\n  ```\n\n- **List my upcoming meetings tomorrow.**\n  ```json\n  {\n    \"model\": \"gpt-5-mini\",\n    \"explanation\": \"Calendar tool lookup is simple; mini is efficient.\"\n  }\n  ```",
+            "instructions": instruction_route,
             "input": responses_body.input,
             "prompt_cache_key": "openai_responses_gpt5-router",
             "text": {
@@ -2390,12 +2471,12 @@ def build_tools(
     # 3) Optional OpenAI web search tool (guarded + not for minimal effort)
     allow_web = (
         ModelFamily.supports("web_search_tool", responses_body.model)
-        and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search_preview", False))
+        and (valves.ENABLE_WEB_SEARCH_TOOL or features.get("web_search", False))
         and ((responses_body.reasoning or {}).get("effort", "").lower() != "minimal")
     )
     if allow_web:
         web_search_tool: Dict[str, Any] = {
-            "type": "web_search_preview",
+            "type": "web_search",
             "search_context_size": valves.WEB_SEARCH_CONTEXT_SIZE,
         }
         if valves.WEB_SEARCH_USER_LOCATION:
