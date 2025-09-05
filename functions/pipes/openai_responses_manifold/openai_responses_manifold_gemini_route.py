@@ -836,6 +836,11 @@ class Pipe:
                 "medium": "중간",
                 "high": "높음",
             }
+            model_labels = {
+                "gpt-5": "GPT-5",
+                "gpt-5-mini": "GPT-5 Mini",
+                "gpt-5-chat-latest": "GPT-5 Chat(비추론)",
+            }
             # If the selected model is chat-only, mark reasoning effort as unsupported.
             if model == "gpt-5-chat-latest":
                 effort_label = "미지원"
@@ -843,7 +848,7 @@ class Pipe:
                 effort_label = effort_labels.get(reasoning_effort, "알 수 없음")
             assistant_message = await status_indicator.add(
                 assistant_message,
-                status_title=f"{model}(으)로 라우팅 중 (추론 복잡도: {effort_label})",
+                status_title=f"{model_labels.get(model, '알 수 없음')}로 라우팅 중 (추론 노력: {effort_label})",
                 status_content=f"설명: {model_router_result.get('explanation', '')}"
             )
 

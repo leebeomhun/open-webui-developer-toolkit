@@ -31,8 +31,13 @@ import secrets
 import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union, Annotated
 from urllib.parse import urlparse
+from google import genai
+from google.genai import types
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Third-party imports
 import aiohttp
@@ -831,10 +836,19 @@ class Pipe:
                 "medium": "중간",
                 "high": "높음",
             }
-            effort_label = effort_labels.get(reasoning_effort, "알 수 없음")
+            model_labels = {
+                "gpt-5": "GPT-5",
+                "gpt-5-mini": "GPT-5 Mini",
+                "gpt-5-chat-latest": "GPT-5 Chat(비추론)",
+            }
+            # If the selected model is chat-only, mark reasoning effort as unsupported.
+            if model == "gpt-5-chat-latest":
+                effort_label = "미지원"
+            else:
+                effort_label = effort_labels.get(reasoning_effort, "알 수 없음")
             assistant_message = await status_indicator.add(
                 assistant_message,
-                status_title=f"{model}(으)로 라우팅 중 (추론 복잡도: {effort_label})",
+                status_title=f"{model_labels.get(model, '알 수 없음')}로 라우팅 중 (추론 노력: {effort_label})",
                 status_content=f"설명: {model_router_result.get('explanation', '')}"
             )
 
@@ -1661,6 +1675,7 @@ class Pipe:
     -   빠르고, 범용적이며, 창의적입니다.
     -   글쓰기, 초안 작성, 채팅 기반 상호작용에 가장 적합합니다.
     -   ⚠️ 도구 호출을 지원하지 **않습니다**—도구가 필요하지 않을 때만 선택하세요.
+    - reasoning_effort을 미지원함으로 reasoning_effort에 "none" 값을 반환합니다
 
 -   **gpt-5-mini**
     -   경량이며, 도구 사용을 지원하고, 반응이 빠릅니다.
@@ -1752,79 +1767,183 @@ class Pipe:
     }
         """
         # --- keep your existing router_body UNCHANGED ---
-        router_body = {
-            "model": "gpt-5-mini",
-            "reasoning": {"effort": "minimal"},
-            "instructions": instruction_route,
-            "input": responses_body.input,
-            "prompt_cache_key": "openai_responses_gpt5-router",
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "gpt5_router",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "model": {
-                                "type": "string",
-                                "enum": ["gpt-5-chat-latest", "gpt-5", "gpt-5-mini"],
-                                "description": "The selected GPT-5 model from the available options."
-                            },
-                            "reasoning_effort": {
-                                "type": "string",
-                                "enum": [
-                                    "minimal",
-                                    "low",
-                                    "medium",
-                                    "high"
-                                ],
-                                "description": "The estimated amount of reasoning effort required for the request."
-                            },
-                            "explanation": {
-                                "type": "string",
-                                "description": "Short 3-5 word rationale for why this model was selected.",
-                                "minLength": 3,
-                                "maxLength": 500
-                            },
-                        },
-                        "required": [
-                        "model",
-                        "explanation",
-                        "reasoning_effort"
-                        ],
-                        "additionalProperties": False
-                    },
-                    "verbosity": "medium",
-                },
-            }
-        }
+        # router_body = {
+        #     "model": "gpt-5-mini",
+        #     "reasoning": {"effort": "minimal"},
+        #     "instructions": instruction_route,
+        #     "input": responses_body.input,
+        #     "prompt_cache_key": "openai_responses_gpt5-router",
+        #     "text": {
+        #         "format": {
+        #             "type": "json_schema",
+        #             "name": "gpt5_router",
+        #             "strict": True,
+        #             "schema": {
+        #                 "type": "object",
+        #                 "properties": {
+        #                     "model": {
+        #                         "type": "string",
+        #                         "enum": ["gpt-5-chat-latest", "gpt-5", "gpt-5-mini"],
+        #                         "description": "The selected GPT-5 model from the available options."
+        #                     },
+        #                     "reasoning_effort": {
+        #                         "type": "string",
+        #                         "enum": [
+        #                             "minimal",
+        #                             "low",
+        #                             "medium",
+        #                             "high"
+        #                         ],
+        #                         "description": "The estimated amount of reasoning effort required for the request."
+        #                     },
+        #                     "explanation": {
+        #                         "type": "string",
+        #                         "description": "Short 3-5 word rationale for why this model was selected.",
+        #                         "minLength": 3,
+        #                         "maxLength": 500
+        #                     },
+        #                 },
+        #                 "required": [
+        #                 "model",
+        #                 "explanation",
+        #                 "reasoning_effort"
+        #                 ],
+        #                 "additionalProperties": False
+        #             },
+        #             "verbosity": "medium",
+        #         },
+        #     }
+        # }
         # -------------------------------------------------
+        def to_gemini_contents(openai_input):
+            # 문자열이면 그대로 사용 (단일 프롬프트)
+            if isinstance(openai_input, str):
+                return openai_input
 
-        try:
-            response = await self.send_openai_responses_nonstreaming_request(
-                router_body,
-                api_key=valves.API_KEY,
-                base_url=valves.BASE_URL,
-            )
-        except Exception as exc:  # pragma: no cover
-            self.logger.warning("GPT-5 router request failed: %s", exc)
-            return responses_body
+            out = []
+            for msg in openai_input or []:
+                role = msg.get("role")
+                # Gemini는 role로 "user" 또는 "model" 사용
+                if role not in ("user", "assistant", "model"):
+                    continue
+                gem_role = "user" if role == "user" else "model"
+
+                parts: list = []
+                content = msg.get("content")
+
+                # OpenAI Responses 형식의 블록 리스트 처리
+                if isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        t = block.get("type")
+
+                        # 텍스트 블록 → Part(text)
+                        if t in ("input_text", "output_text", "text"):
+                            txt = block.get("text", "")
+                            if txt:
+                                parts.append(types.Part.from_text(text=txt))
+                            continue
+
+                        # 이미지 블록 → Part.from_uri(image_url)
+                        if t == "input_image":
+                            url = (block.get("image_url") or "").strip()
+                            if url:
+                                # data URI 처리 (data:<mime>;base64,<payload>)
+                                if url.startswith("data:"):
+                                    try:
+                                        header, b64 = url.split(",", 1)
+                                        # data:mime/type;base64,
+                                        mime = header.split(";")[0][5:] or "application/octet-stream"
+                                        import base64
+                                        data = base64.b64decode(b64)
+                                        parts.append(types.Part.from_bytes(data=data, mime_type=mime))
+                                    except Exception:
+                                        # 파싱 실패 시 텍스트로 폴백
+                                        parts.append(types.Part.from_text(text=f"[image:{url[:50]}...]"))
+                                else:
+                                    # 원격 URL은 from_uri 사용
+                                    parts.append(types.Part.from_uri(file_uri=url))
+                            continue
+
+                        # 파일 블록 → 우선 URI가 있으면 from_uri, 없으면 텍스트 플레이스홀더
+                        if t == "input_file":
+                            file_uri = (
+                                block.get("file_url")
+                                or block.get("uri")
+                                or block.get("url")
+                            )
+                            if isinstance(file_uri, str) and file_uri.strip():
+                                parts.append(types.Part.from_uri(file_uri=file_uri.strip()))
+                            else:
+                                file_id = block.get("file_id")
+                                if file_id:
+                                    parts.append(types.Part.from_text(text=f"[file:{file_id}]"))
+                            continue
+
+                # content가 문자열인 경우 보정
+                elif isinstance(content, str) and content.strip():
+                    parts.append(types.Part.from_text(text=content))
+
+                if parts:
+                    out.append(types.Content(role=gem_role, parts=parts))
+
+            # 대화가 비어있으면 마지막 사용자 텍스트로 폴백
+            if not out and isinstance(openai_input, list):
+                try:
+                    for msg in reversed(openai_input):
+                        if msg.get("role") == "user":
+                            blocks = msg.get("content") or []
+                            if isinstance(blocks, list):
+                                for b in blocks:
+                                    if isinstance(b, dict) and b.get("type") in ("input_text", "text"):
+                                        txt = (b.get("text") or "").strip()
+                                        if txt:
+                                            return [types.Content(role="user", parts=[types.Part.from_text(text=txt)])]
+                except Exception:
+                    pass
+            return out or ""
+
+        class ResponseConfig(BaseModel):
+            model: Literal["gpt-5", "gpt-5-mini", "gpt-5-chat-latest"]
+            reasoning_effort: Literal["minimal", "low", "medium", "high"]
+            explanation: str
+        client = genai.Client()
+        response = client.models.generate_content(
+            model="gemini-2.5-flash", 
+            config=types.GenerateContentConfig(
+                temperature=0,
+                system_instruction=instruction_route,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                response_mime_type="application/json",
+                response_schema=ResponseConfig
+            ),
+            contents=to_gemini_contents(responses_body.input),
+        )
+        # try:
+        #     response = await self.send_openai_responses_nonstreaming_request(
+        #         router_body,
+        #         api_key=valves.API_KEY,
+        #         base_url=valves.BASE_URL,
+        #     )
+        # except Exception as exc:  # pragma: no cover
+        #     self.logger.warning("GPT-5 router request failed: %s", exc)
+        #     return responses_body
 
         # Simple shape: output[0].content[0].text
-        try:
-            text = next((b["text"] for o in reversed(response["output"]) if o["type"]=="message" for b in o["content"] if b["type"]=="output_text"), "")
-        except Exception as exc:  # pragma: no cover
-            self.logger.warning("Router response missing expected fields: %s; payload keys=%s",
-                                exc, list(response.keys()))
-            return responses_body
+        # try:
+        #     text = next((b["text"] for o in reversed(response["output"]) if o["type"]=="message" for b in o["content"] if b["type"]=="output_text"), "")
+        # except Exception as exc:  # pragma: no cover
+        #     self.logger.warning("Router response missing expected fields: %s; payload keys=%s",
+        #                         exc, list(response.keys()))
+        #     return responses_body
 
         # Parse JSON (with a tiny fallback to the first {...} block)
         try:
-            router_json: Dict[str, Any] = json.loads(text)
+            router_json: Dict[str, Any] = json.loads(response.text)
         except Exception:
-            start, end = text.find("{"), text.rfind("}")
-            router_json = json.loads(text[start:end+1]) if start != -1 and end != -1 and end > start else {}
+            start, end = response.text.find("{"), response.text.rfind("}")
+            router_json = json.loads(response.text[start:end+1]) if start != -1 and end != -1 and end > start else {}
 
         if router_json:
             responses_body.model = router_json.get("model")
