@@ -734,6 +734,21 @@ class Pipe:
                 event_emitter=__event_emitter__
             )
 
+        # Rebuild tools after routing so decisions reflect the final model/effort
+        tools = build_tools(
+            responses_body,
+            valves,
+            __tools__=__tools__,
+            features=features,
+            extra_tools=getattr(completions_body, "extra_tools", None),
+        )
+
+        # Final guard: strip web_search when minimal effort or model unsupported
+        if tools:
+            effort_now = (responses_body.reasoning or {}).get("effort", "").lower()
+            if effort_now == "minimal" or not ModelFamily.supports("web_search_tool", responses_body.model):
+                tools = [t for t in tools if t.get("type") != "web_search"]
+
         # STEP 6: Add tools to responses body, if supported
         if ModelFamily.supports("function_calling", responses_body.model):
             responses_body.tools = tools
@@ -1727,7 +1742,7 @@ class Pipe:
 -   **지금 밴쿠버 날씨는 어때요?**
     {
       "model": "gpt-5",
-      "reasoning_effort":"minimal",
+      "reasoning_effort":"low",
       "explanation": "실시간 정보 필요, web_search 도구 사용 필요함"
     }
 
