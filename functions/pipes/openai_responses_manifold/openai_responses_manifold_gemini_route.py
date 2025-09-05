@@ -835,9 +835,12 @@ class Pipe:
                 "low": "낮음",
                 "medium": "중간",
                 "high": "높음",
-                "none": "미지원",
             }
-            effort_label = effort_labels.get(reasoning_effort, "알 수 없음")
+            # If the selected model is chat-only, mark reasoning effort as unsupported.
+            if model == "gpt-5-chat-latest":
+                effort_label = "미지원"
+            else:
+                effort_label = effort_labels.get(reasoning_effort, "알 수 없음")
             assistant_message = await status_indicator.add(
                 assistant_message,
                 status_title=f"{model}(으)로 라우팅 중 (추론 복잡도: {effort_label})",
@@ -1679,10 +1682,9 @@ class Pipe:
     -   추론과 복잡한 다단계 분석에 강합니다.
     -   **복잡하거나 심층적인 분석 작업**을 위해 설계되었습니다.
     -   ✅ 함수 호출 및 고급 연산 지원—도구 의존적이거나 고도의 복잡성을 요구하는 추론 필요 시 선택하세요.
-    - reasoning_effort minimal은 지원하지 않습니다, low, medium, high 값만 지원
 
 ## **reasoning_effort**
--   minimal(gpt-5는 미지원)
+-   minimal
     -   추론 토큰 사용량: 매우 적음
     -   처리 속도: 가장 빠름 ⏩
     -   특성: 지시사항 충실, 반응은 빠르지만 주도성 낮음
@@ -1720,7 +1722,7 @@ class Pipe:
 -   **지금 밴쿠버 날씨는 어때요?**
     {
       "model": "gpt-5",
-      "reasoning_effort":"low",
+      "reasoning_effort":"minimal",
       "explanation": "실시간 정보 필요, web_search 도구 사용 필요함"
     }
 
@@ -1899,7 +1901,7 @@ class Pipe:
 
         class ResponseConfig(BaseModel):
             model: Literal["gpt-5", "gpt-5-mini", "gpt-5-chat-latest"]
-            reasoning_effort: Literal["minimal", "low", "medium", "high", "none"]
+            reasoning_effort: Literal["minimal", "low", "medium", "high"]
             explanation: str
         client = genai.Client()
         response = client.models.generate_content(
