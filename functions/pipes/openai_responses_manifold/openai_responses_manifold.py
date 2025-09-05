@@ -417,6 +417,12 @@ class ResponsesBody(BaseModel):
                         mk = parse_marker(segment["marker"])
                         item = items_lookup.get(mk["ulid"])
                         if item is not None:
+                            # Skip re-injecting prior tool "call" items (e.g., web_search_call),
+                            # which can cause API errors or duplicate executions. Allow only
+                            # non-call carryover items (e.g., reasoning or function_call_output).
+                            itype = str(item.get("type", ""))
+                            if itype.endswith("_call"):
+                                continue
                             openai_input.append(item)
                     elif segment["type"] == "text" and segment["text"].strip():
                         openai_input.append({
@@ -1062,7 +1068,13 @@ class Pipe:
                     # ─── Capture final response (incl. all non-visible items like reasoning tokens for future turns)
                     if etype == "response.completed":
                         final_response = event.get("response", {})
-                        body.input.extend(final_response.get("output", [])) # This includes all non-visible items (e.g. reasoning, web_search_call, tool calls, etc..) and appends to body.input so they are included in future turns (if any)
+                        # Only carry forward non-visible, non-call artifacts needed for continuity
+                        carry = [
+                            i for i in final_response.get("output", [])
+                            if i.get("type") not in ("message", "reasoning_summary_text")
+                            and not str(i.get("type", "")).endswith("_call")
+                        ]
+                        body.input.extend(carry)
                         break
 
                 if final_response is None:
