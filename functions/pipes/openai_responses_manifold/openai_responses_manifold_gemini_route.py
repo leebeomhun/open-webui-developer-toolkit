@@ -31,7 +31,7 @@ import secrets
 import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Union, Annotated
 from urllib.parse import urlparse
 from google import genai
 from google.genai import types
@@ -1679,9 +1679,10 @@ class Pipe:
     -   추론과 복잡한 다단계 분석에 강합니다.
     -   **복잡하거나 심층적인 분석 작업**을 위해 설계되었습니다.
     -   ✅ 함수 호출 및 고급 연산 지원—도구 의존적이거나 고도의 복잡성을 요구하는 추론 필요 시 선택하세요.
+    - reasoning_effort minimal은 지원하지 않습니다, low, medium, high 값만 지원
 
 ## **reasoning_effort**
--   minimal
+-   minimal(gpt-5는 미지원)
     -   추론 토큰 사용량: 매우 적음
     -   처리 속도: 가장 빠름 ⏩
     -   특성: 지시사항 충실, 반응은 빠르지만 주도성 낮음
@@ -1719,7 +1720,7 @@ class Pipe:
 -   **지금 밴쿠버 날씨는 어때요?**
     {
       "model": "gpt-5",
-      "reasoning_effort":"minimal",
+      "reasoning_effort":"low",
       "explanation": "실시간 정보 필요, web_search 도구 사용 필요함"
     }
 
@@ -1906,6 +1907,7 @@ class Pipe:
             config=types.GenerateContentConfig(
                 temperature=0,
                 system_instruction=instruction_route,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
                 response_mime_type="application/json",
                 response_schema=ResponseConfig
             ),
