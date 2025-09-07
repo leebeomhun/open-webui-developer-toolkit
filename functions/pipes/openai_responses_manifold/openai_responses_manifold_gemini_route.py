@@ -734,9 +734,20 @@ class Pipe:
                 event_emitter=__event_emitter__
             )
 
+        # Final guard: strip web_search when minimal effort or model unsupported
+        # (mirrors openai_responses_manifold.py behavior)
+        if tools:
+            effort_now = (responses_body.reasoning or {}).get("effort", "").lower()
+            if effort_now == "minimal" or not ModelFamily.supports("web_search_tool", responses_body.model):
+                tools = [t for t in tools if t.get("type") != "web_search"]
+
         # STEP 6: Add tools to responses body, if supported
         if ModelFamily.supports("function_calling", responses_body.model):
             responses_body.tools = tools
+            # Safety: OpenAI's web_search tool may conflict with parallel_tool_calls.
+            # If web_search is present, disable parallel tool calls on the request.
+            if any(t.get("type") == "web_search" for t in (tools or [])):
+                responses_body.parallel_tool_calls = False
 
         # STEP 7: Enable reasoning summary if enabled and supported
         if ModelFamily.supports("reasoning_summary", responses_body.model) and valves.REASONING_SUMMARY != "disabled":
