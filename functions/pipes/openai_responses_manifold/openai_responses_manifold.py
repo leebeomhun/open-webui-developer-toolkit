@@ -550,6 +550,11 @@ class Pipe:
             description="REQUIRES VERIFIED OPENAI ORG. If verified, highly recommend using 'response' or 'conversation' for best results. If `disabled` (default) = never request encrypted reasoning tokens; if `response` = request tokens so the model can carry reasoning across tool calls for the current response; If `conversation` = also persist tokens for future messages in this chat (higher token usage; quality may vary).",
         )
         
+        BASE_API_PLATFORM: Literal["openai", "google"] = Field(
+            default="google",
+            description="The base API platform to use. Defaults to 'google'.",
+        )
+        
         # Tool execution behavior
         PERSIST_TOOL_RESULTS: bool = Field(
             default=True,
@@ -1797,54 +1802,6 @@ class Pipe:
       "explanation": "캘린더 도구 조회는 간단함; mini가 효율적임."
     }
         """
-        # --- keep your existing router_body UNCHANGED ---
-        # router_body = {
-        #     "model": "gpt-5-mini",
-        #     "reasoning": {"effort": "minimal"},
-        #     "instructions": instruction_route,
-        #     "input": responses_body.input,
-        #     "prompt_cache_key": "openai_responses_gpt5-router",
-        #     "text": {
-        #         "format": {
-        #             "type": "json_schema",
-        #             "name": "gpt5_router",
-        #             "strict": True,
-        #             "schema": {
-        #                 "type": "object",
-        #                 "properties": {
-        #                     "model": {
-        #                         "type": "string",
-        #                         "enum": ["gpt-5-chat-latest", "gpt-5", "gpt-5-mini"],
-        #                         "description": "The selected GPT-5 model from the available options."
-        #                     },
-        #                     "reasoning_effort": {
-        #                         "type": "string",
-        #                         "enum": [
-        #                             "minimal",
-        #                             "low",
-        #                             "medium",
-        #                             "high"
-        #                         ],
-        #                         "description": "The estimated amount of reasoning effort required for the request."
-        #                     },
-        #                     "explanation": {
-        #                         "type": "string",
-        #                         "description": "Short 3-5 word rationale for why this model was selected.",
-        #                         "minLength": 3,
-        #                         "maxLength": 500
-        #                     },
-        #                 },
-        #                 "required": [
-        #                 "model",
-        #                 "explanation",
-        #                 "reasoning_effort"
-        #                 ],
-        #                 "additionalProperties": False
-        #             },
-        #             "verbosity": "medium",
-        #         },
-        #     }
-        # }
         # -------------------------------------------------
         def to_gemini_contents(openai_input):
             # 문자열이면 그대로 사용 (단일 프롬프트)
@@ -1934,47 +1891,101 @@ class Pipe:
                 except Exception:
                     pass
             return out or ""
+        # --- keep your existing router_body UNCHANGED ---
+        if self.valves.BASE_API_PLATFORM == "openai":
+            router_body = {
+                "model": "gpt-5-mini",
+                "reasoning": {"effort": "minimal"},
+                "instructions": instruction_route,
+                "input": responses_body.input,
+                "prompt_cache_key": "openai_responses_gpt5-router",
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "gpt5_router",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "model": {
+                                    "type": "string",
+                                    "enum": ["gpt-5-chat-latest", "gpt-5", "gpt-5-mini"],
+                                    "description": "The selected GPT-5 model from the available options."
+                                },
+                                "reasoning_effort": {
+                                    "type": "string",
+                                    "enum": [
+                                        "minimal",
+                                        "low",
+                                        "medium",
+                                        "high"
+                                    ],
+                                    "description": "The estimated amount of reasoning effort required for the request."
+                                },
+                                "explanation": {
+                                    "type": "string",
+                                    "description": "Short 3-5 word rationale for why this model was selected.",
+                                    "minLength": 3,
+                                    "maxLength": 500
+                                },
+                            },
+                            "required": [
+                            "model",
+                            "explanation",
+                            "reasoning_effort"
+                            ],
+                            "additionalProperties": False
+                        },
+                        "verbosity": "medium",
+                    },
+                }
+            }
+            try:
+                response = await self.send_openai_responses_nonstreaming_request(
+                    router_body,
+                    api_key=valves.API_KEY,
+                    base_url=valves.BASE_URL,
+                )
+            except Exception as exc:  # pragma: no cover
+                self.logger.warning("GPT-5 router request failed: %s", exc)
+                return responses_body
 
-        class ResponseConfig(BaseModel):
-            model: Literal["gpt-5", "gpt-5-mini", "gpt-5-chat-latest"]
-            reasoning_effort: Literal["minimal", "low", "medium", "high"]
-            explanation: str
-        client = genai.Client()
-        response = client.models.generate_content(
-            model="gemini-2.5-flash", 
-            config=types.GenerateContentConfig(
-                temperature=0,
-                system_instruction=instruction_route,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-                response_mime_type="application/json",
-                response_schema=ResponseConfig
-            ),
-            contents=to_gemini_contents(responses_body.input),
-        )
-        # try:
-        #     response = await self.send_openai_responses_nonstreaming_request(
-        #         router_body,
-        #         api_key=valves.API_KEY,
-        #         base_url=valves.BASE_URL,
-        #     )
-        # except Exception as exc:  # pragma: no cover
-        #     self.logger.warning("GPT-5 router request failed: %s", exc)
-        #     return responses_body
+            # Simple shape: output[0].content[0].text
+            try:
+                text = next((b["text"] for o in reversed(response["output"]) if o["type"]=="message" for b in o["content"] if b["type"]=="output_text"), "")
+            except Exception as exc:  # pragma: no cover
+                self.logger.warning("Router response missing expected fields: %s; payload keys=%s",
+                                    exc, list(response.keys()))
+                return responses_body
+            try:
+                router_json: Dict[str, Any] = json.loads(text)
+            except Exception:
+                start, end = text.find("{"), text.rfind("}")
+                router_json = json.loads(text[start:end+1]) if start != -1 and end != -1 and end > start else {}
 
-        # Simple shape: output[0].content[0].text
-        # try:
-        #     text = next((b["text"] for o in reversed(response["output"]) if o["type"]=="message" for b in o["content"] if b["type"]=="output_text"), "")
-        # except Exception as exc:  # pragma: no cover
-        #     self.logger.warning("Router response missing expected fields: %s; payload keys=%s",
-        #                         exc, list(response.keys()))
-        #     return responses_body
-
+        elif self.valves.BASE_API_PLATFORM == "google":
+            class ResponseConfig(BaseModel):
+                model: Literal["gpt-5", "gpt-5-mini", "gpt-5-chat-latest"]
+                reasoning_effort: Literal["minimal", "low", "medium", "high"]
+                explanation: str
+            client = genai.Client()
+            response = client.models.generate_content(
+                model="gemini-2.5-flash", 
+                config=types.GenerateContentConfig(
+                    temperature=0,
+                    system_instruction=instruction_route,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    response_mime_type="application/json",
+                    response_schema=ResponseConfig
+                ),
+                contents=to_gemini_contents(responses_body.input),
+            )
+            try:
+                router_json: Dict[str, Any] = json.loads(response.text)
+            except Exception:
+                start, end = response.text.find("{"), response.text.rfind("}")
+                router_json = json.loads(response.text[start:end+1]) if start != -1 and end != -1 and end > start else {}
         # Parse JSON (with a tiny fallback to the first {...} block)
-        try:
-            router_json: Dict[str, Any] = json.loads(response.text)
-        except Exception:
-            start, end = response.text.find("{"), response.text.rfind("}")
-            router_json = json.loads(response.text[start:end+1]) if start != -1 and end != -1 and end > start else {}
 
         if router_json:
             responses_body.model = router_json.get("model")
